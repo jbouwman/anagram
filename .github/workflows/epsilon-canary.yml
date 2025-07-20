@@ -1,0 +1,64 @@
+name: Epsilon Canary Test
+
+on:
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+      fail-fast: false
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Epsilon
+      run: |
+        curl -sSL https://raw.githubusercontent.com/jbouwman/epsilon/main/scripts/install.sh | bash
+        echo "$HOME/.epsilon/bin" >> $GITHUB_PATH
+    
+    - name: Verify Epsilon Installation
+      run: |
+        epsilon --version
+        which epsilon
+    
+    - name: Run Tests
+      run: |
+        cd ${{ github.workspace }}
+        epsilon test
+    
+    - name: Start Service and Test Endpoints
+      run: |
+        # Start service in background
+        epsilon run --port 8080 &
+        SERVICE_PID=$!
+        
+        # Wait for service to start
+        sleep 5
+        
+        # Test health endpoint
+        curl -f http://localhost:8080/health || exit 1
+        
+        # Test anagram endpoint
+        curl -f -X POST http://localhost:8080/api/anagram \
+          -H "Content-Type: application/json" \
+          -d '{"text":"hello world"}' || exit 1
+        
+        # Kill the service
+        kill $SERVICE_PID
+    
+    - name: Report Status
+      if: always()
+      run: |
+        echo "Epsilon canary test completed"
+        echo "OS: ${{ matrix.os }}"
+        echo "Status: ${{ job.status }}"

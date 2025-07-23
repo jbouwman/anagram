@@ -1,2 +1,76 @@
-# anagram
-An anagram generation service
+# Anagram Service
+
+A web service for generating anagrams.
+
+## Overview
+
+This project implements an anagram generation web service using
+epsilon's libraries for string manipulation, JSON handling, network
+programming and data structures.
+
+## Project Structure
+
+```
+anagram/
+├── src/
+│   └── anagram.lisp         # Service implementation
+├── tests/
+│   └── anagram-tests.lisp   # Test suite
+└── package.lisp             # Package definition
+```
+
+## Prerequisites
+
+- Epsilon runtime (either in PATH or checked out locally in `epsilon/`)
+
+## Running
+
+```bash
+epsilon run
+
+# With custom port
+epsilon run --port 3000
+```
+
+## API Endpoints
+
+### GET /
+HTML interface for generating anagrams.
+
+### GET /health
+Health check endpoint.
+
+**Response:**
+```json
+{"status": "healthy"}
+```
+
+### POST /api/anagram
+Generate an anagram from input text.
+
+**Request:**
+```json
+{"text": "hello world"}
+```
+
+**Response:**
+```json
+{
+  "original": "hello world",
+  "anagram": "doll howler"
+}
+```
+
+## Testing
+
+Run the test suite:
+
+```bash
+epsilon test
+```
+
+The test suite verifies:
+- Health check endpoint
+- Anagram generation with various inputs
+- Error handling for invalid requests
+- 404 responses for unknown endpoints

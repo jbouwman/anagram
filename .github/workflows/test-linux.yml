@@ -1,0 +1,36 @@
+name: Linux
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Epsilon
+      run: |
+        curl -sSL https://raw.githubusercontent.com/jbouwman/epsilon/main/scripts/install.sh | bash
+        echo "$HOME/.epsilon/bin" >> $GITHUB_PATH
+    
+    - name: Run Tests
+      run: epsilon test
+    
+    - name: Integration Test
+      run: |
+        epsilon run --port 8080 &
+        SERVICE_PID=$!
+        sleep 5
+        curl -f http://localhost:8080/health
+        curl -f -X POST http://localhost:8080/api/anagram \
+          -H "Content-Type: application/json" \
+          -d '{"text":"hello world"}'
+        kill $SERVICE_PID

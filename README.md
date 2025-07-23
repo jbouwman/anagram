@@ -1,5 +1,8 @@
 # Anagram Service
 
+[![Linux](https://github.com/jbouwman/anagram/actions/workflows/test-linux.yml/badge.svg)](https://github.com/jbouwman/anagram/actions/workflows/test-linux.yml)
+[![macOS](https://github.com/jbouwman/anagram/actions/workflows/test-macos.yml/badge.svg)](https://github.com/jbouwman/anagram/actions/workflows/test-macos.yml)
+
 A web service for generating anagrams.
 
 ## Overview

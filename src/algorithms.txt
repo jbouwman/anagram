@@ -1,0 +1,212 @@
+;;; Advanced Anagram Algorithms
+;;; This file contains sophisticated anagram generation and analysis algorithms
+
+(defpackage anagram.algorithms
+  (:use :cl)
+  (:local-nicknames
+   (map epsilon.map)
+   (str epsilon.string))
+  (:export
+   ;; Character frequency analysis
+   #:char-frequencies
+   #:frequencies-equal-p
+   #:valid-anagram-p
+   
+   ;; Advanced generation
+   #:generate-permutations
+   #:generate-fuzzy-anagram
+   
+   ;; Scoring system
+   #:score-anagram
+   #:total-score
+   
+   ;; Utilities
+   #:edit-distance
+   #:fuzzy-anagram-score))
+
+(in-package anagram.algorithms)
+
+;;; Character frequency analysis
+(defun char-frequencies (string)
+  "Return a map of character frequencies"
+  (let ((freq-map map:+empty+))
+    (loop for char across (string-downcase string)
+          when (alpha-char-p char)
+          do (setf freq-map 
+                   (map:update freq-map char 0 #'1+)))
+    freq-map))
+
+(defun frequencies-equal-p (freq1 freq2)
+  "Check if two frequency maps are equal"
+  (and (= (map:size freq1) (map:size freq2))
+       (let ((all-equal t))
+         (map:each (lambda (char count)
+                     (unless (= count (map:get freq2 char 0))
+                       (setf all-equal nil)))
+                   freq1)
+         all-equal)))
+
+(defun valid-anagram-p (word1 word2)
+  "Check if word2 is a valid anagram of word1"
+  (frequencies-equal-p (char-frequencies word1)
+                       (char-frequencies word2)))
+
+;;; Advanced anagram generation
+(defun generate-permutations (string &key (max-results 10))
+  "Generate multiple anagram permutations of a string"
+  (let ((chars (coerce (string-downcase string) 'list))
+        (results '())
+        (seen (make-hash-table :test 'equal)))
+    (labels ((permute (remaining current)
+               (if (null remaining)
+                   (let ((result (coerce current 'string)))
+                     (unless (gethash result seen)
+                       (setf (gethash result seen) t)
+                       (push result results)))
+                   (when (< (length results) max-results)
+                     (loop for i from 0 below (length remaining)
+                           do (let ((char (nth i remaining))
+                                    (rest (append (subseq remaining 0 i)
+                                                  (subseq remaining (1+ i)))))
+                                (permute rest (cons char current))))))))
+      (permute (remove-if-not #'alpha-char-p chars) '())
+      (reverse results))))
+
+;;; Fuzzy anagrams (allowing letter changes)
+(defun edit-distance (s1 s2)
+  "Calculate Levenshtein distance between two strings"
+  (let* ((len1 (length s1))
+         (len2 (length s2))
+         (d (make-array (list (1+ len1) (1+ len2)) :initial-element 0)))
+    
+    ;; Initialize first row and column
+    (loop for i from 0 to len1 do (setf (aref d i 0) i))
+    (loop for j from 0 to len2 do (setf (aref d 0 j) j))
+    
+    ;; Fill the matrix
+    (loop for i from 1 to len1 do
+      (loop for j from 1 to len2 do
+        (let ((cost (if (char= (char s1 (1- i)) (char s2 (1- j))) 0 1)))
+          (setf (aref d i j)
+                (min (1+ (aref d (1- i) j))      ; deletion
+                     (1+ (aref d i (1- j)))      ; insertion
+                     (+ (aref d (1- i) (1- j)) cost)))))) ; substitution
+    
+    (aref d len1 len2)))
+
+(defun fuzzy-anagram-score (original candidate &key (max-edits 2))
+  "Score how good an anagram candidate is, allowing some edits"
+  (let* ((orig-freq (char-frequencies original))
+         (cand-freq (char-frequencies candidate))
+         (common-chars 0)
+         (extra-chars 0)
+         (missing-chars 0))
+    
+    ;; Count common characters
+    (map:each (lambda (char count)
+                (let ((cand-count (map:get cand-freq char 0)))
+                  (incf common-chars (min count cand-count))
+                  (when (> count cand-count)
+                    (incf missing-chars (- count cand-count)))))
+              orig-freq)
+    
+    ;; Count extra characters in candidate
+    (map:each (lambda (char count)
+                (let ((orig-count (map:get orig-freq char 0)))
+                  (when (> count orig-count)
+                    (incf extra-chars (- count orig-count)))))
+              cand-freq)
+    
+    (let ((total-edits (+ missing-chars extra-chars)))
+      (if (<= total-edits max-edits)
+          (- 100 (* total-edits 10)) ; Score: 100 - (edits * 10)
+          0))))
+
+(defun generate-fuzzy-anagram (text &key (max-edits 1) (attempts 50))
+  "Generate anagram allowing up to max-edits letter changes"
+  (let ((best-candidate text)
+        (best-score 0))
+    
+    (dotimes (i attempts)
+      (let* ((candidate (shuffle-string text)) ; Use basic shuffle from main module
+             (score (fuzzy-anagram-score text candidate :max-edits max-edits)))
+        (when (> score best-score)
+          (setf best-candidate candidate
+                best-score score))))
+    
+    ;; If we want to actually add/remove letters, do some mutations
+    (when (and (> max-edits 0) (< best-score 90))
+      (let ((chars (coerce best-candidate 'list)))
+        (dotimes (edit (min max-edits 2))
+          (case (random 3)
+            (0 ; Add random letter
+             (let ((pos (random (1+ (length chars))))
+                   (new-char (char "abcdefghijklmnopqrstuvwxyz" (random 26))))
+               (setf chars (append (subseq chars 0 pos)
+                                   (list new-char)
+                                   (subseq chars pos)))))
+            (1 ; Remove random letter
+             (when (> (length chars) 1)
+               (let ((pos (random (length chars))))
+                 (setf chars (append (subseq chars 0 pos)
+                                     (subseq chars (1+ pos)))))))
+            (2 ; Change random letter
+             (when (> (length chars) 0)
+               (let ((pos (random (length chars)))
+                     (new-char (char "abcdefghijklmnopqrstuvwxyz" (random 26))))
+                 (setf (nth pos chars) new-char))))))
+        (setf best-candidate (coerce chars 'string))))
+    
+    best-candidate))
+
+;; Helper function for basic shuffling (needs to be available here)
+(defun shuffle-string (string)
+  "Randomly shuffle characters in a string"
+  (let ((chars (coerce string 'list)))
+    (coerce (loop for i from (length chars) downto 2
+                  do (rotatef (nth (random i) chars)
+                              (nth (1- i) chars))
+                  finally (return chars))
+            'string)))
+
+;;; Anagram scoring system
+(defun score-anagram (original anagram)
+  "Score an anagram based on various features"
+  (let ((score (make-hash-table :test 'equal)))
+    
+    ;; Basic validity (perfect anagram = 100 points)
+    (setf (gethash "validity" score)
+          (if (valid-anagram-p original anagram) 100 0))
+    
+    ;; Word preservation (maintaining word boundaries)
+    (let* ((orig-words (str:split original #\Space))
+           (anag-words (str:split anagram #\Space))
+           (word-score (if (= (length orig-words) (length anag-words)) 50 0)))
+      (setf (gethash "word-structure" score) word-score))
+    
+    ;; Readability (avoiding too many consonant clusters)
+    (let ((consonant-clusters 0))
+      (loop for i from 0 below (- (length anagram) 1)
+            when (and (not (find (char anagram i) "aeiou"))
+                      (not (find (char anagram (1+ i)) "aeiou"))
+                      (alpha-char-p (char anagram i))
+                      (alpha-char-p (char anagram (1+ i))))
+            do (incf consonant-clusters))
+      (setf (gethash "readability" score)
+            (max 0 (- 50 (* consonant-clusters 5)))))
+    
+    ;; Diversity (how much the letters are mixed up)
+    (let ((same-position-count 0))
+      (loop for i from 0 below (min (length original) (length anagram))
+            when (char= (char original i) (char anagram i))
+            do (incf same-position-count))
+      (setf (gethash "diversity" score)
+            (max 0 (- 50 (* same-position-count 5)))))
+    
+    score))
+
+(defun total-score (score-map)
+  "Calculate total score from score components"
+  (let ((total 0))
+    (maphash (lambda (k v) (declare (ignore k)) (incf total v)) score-map)
+    total))

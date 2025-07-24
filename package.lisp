@@ -1,7 +1,8 @@
-(:name "simple-anagram-service"
+(:name "anagram"
  :version "1.0.0"
- :author "Anagram Demo"
- :description "Simple anagram generation web service demonstrating epsilon"
- :dependencies ("epsilon.core")
- :main "epsilon-anagram-service:main"
- :provides ("simple-anagram-service"))
+ :author "Jesse Bouwman"
+ :description "A web service that generates anagrams"
+ :dependencies ("epsilon.core" "epsilon.json" "epsilon.test")
+ :sources ("src")
+ :tests ("tests")
+ :main "anagram:main")

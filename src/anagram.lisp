@@ -1,19 +1,19 @@
 (defpackage anagram
-  (:use :cl)
+  (:use
+   cl)
   (:local-nicknames
-   (#:web #:epsilon.web)
-   (#:map #:epsilon.map)
-   (#:str #:epsilon.string)
-   (#:seq #:epsilon.sequence)
-   (#:json #:epsilon.json)
-   (#:request #:epsilon.http.request)
-   (#:response #:epsilon.http.response)
-   (#:server #:epsilon.http.server))
+   (web epsilon.web)
+   (map epsilon.map)
+   (str epsilon.string)
+   (seq epsilon.sequence)
+   (json epsilon.json)
+   (request epsilon.http.request)
+   (response epsilon.http.response)
+   (server epsilon.http.server))
   (:export
-   #:main
-   #:compute-anagram))
+   main))
 
-(in-package :anagram)
+(in-package anagram)
 
 ;;; Simple anagram logic using character shuffling
 

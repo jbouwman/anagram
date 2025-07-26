@@ -71,9 +71,3 @@ Run the test suite:
 ```bash
 epsilon test
 ```
-
-The test suite verifies:
-- Health check endpoint
-- Anagram generation with various inputs
-- Error handling for invalid requests
-- 404 responses for unknown endpoints

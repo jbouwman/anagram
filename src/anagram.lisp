@@ -9,7 +9,8 @@
    (json epsilon.json)
    (request epsilon.http.request)
    (response epsilon.http.response)
-   (server epsilon.http.server))
+   (server epsilon.http.server)
+   (argparse epsilon.argparse))
   (:export
    main))
 
@@ -116,33 +117,136 @@
   (:get "/health" #'health-handler)
   (:post "/api/anagram" #'anagram-handler))
 
+;;; Signal handling for graceful shutdown
+
+(defvar *server* nil
+  "Current running server instance")
+
+(defvar *shutdown-requested* nil
+  "Flag to indicate shutdown was requested")
+
+(defun setup-signal-handlers ()
+  "Set up signal handlers for graceful shutdown"
+  #+sbcl
+  (progn
+    ;; Handle SIGINT (Ctrl+C)
+    (sb-sys:enable-interrupt sb-posix:sigint 
+      (lambda (signal info context)
+        (declare (ignore signal info context))
+        (format t "~%Received SIGINT, initiating graceful shutdown...~%")
+        (setf *shutdown-requested* t)
+        (when *server*
+          (ignore-errors (server:stop-server *server*)))))
+    
+    ;; Handle SIGTERM (typical Docker/systemd shutdown)
+    (sb-sys:enable-interrupt sb-posix:sigterm
+      (lambda (signal info context)
+        (declare (ignore signal info context))
+        (format t "~%Received SIGTERM, initiating graceful shutdown...~%")
+        (setf *shutdown-requested* t)
+        (when *server*
+          (ignore-errors (server:stop-server *server*)))))))
+
+(defun create-argument-parser ()
+  "Create command line argument parser for anagram service"
+  (let ((parser (argparse:make-parser 
+                 :prog "anagram"
+                 :description "A web service that generates anagrams by shuffling word characters")))
+    
+    ;; Port option
+    (argparse:add-argument parser
+                           "--port"
+                           :type 'integer
+                           :default 8080
+                           :help "Port to listen on (default: 8080)")
+    
+    ;; Host/address option  
+    (argparse:add-argument parser
+                           "--host"
+                           :type 'string
+                           :default "0.0.0.0"
+                           :help "Host address to bind to (default: 0.0.0.0)")
+    
+    ;; Help option
+    (argparse:add-argument parser
+                           "--help"
+                           :action 'store-true
+                           :help "Show this help message and exit")
+    
+    ;; Version option
+    (argparse:add-argument parser
+                           "--version"
+                           :action 'store-true
+                           :help "Show version information and exit")
+    
+    parser))
+
 ;;; Main entry point
 
 (defun main ()
   "Main entry point for the anagram service"
-  (format t "~&Starting Anagram Service...~%")
-  
-  ;; Parse command line arguments for port
-  (let ((port (parse-integer 
-               (or (sb-ext:posix-getenv "PORT") "8080")
-               :junk-allowed t)))
-    (when (null port)
-      (setf port 8080))
+  (let ((parser (create-argument-parser)))
     
-    (format t "~&Starting service on port ~A~%" port)
-    
-    ;; Create handler with routes and middleware
-    (let ((app (web:wrap-middleware 
-                (web:handle-routes *routes*)
-                web:logging-middleware
-                web:json-errors-middleware)))
+    ;; Parse command line arguments
+    (handler-case
+        (let* ((args (rest sb-ext:*posix-argv*))
+               (parsed (argparse:parse-args parser args)))
+          
+          ;; Handle help
+          (when (map:get (argparse:parsed-options parsed) "help")
+            (argparse:print-help parser)
+            (sb-ext:exit :code 0))
+          
+          ;; Handle version
+          (when (map:get (argparse:parsed-options parsed) "version")
+            (format t "Anagram Service v1.0.0~%")
+            (sb-ext:exit :code 0))
+          
+          ;; Extract options
+          (let ((port (map:get (argparse:parsed-options parsed) "port" 8080))
+                (host (map:get (argparse:parsed-options parsed) "host" "0.0.0.0")))
+            
+            ;; Validate port range
+            (unless (and (integerp port) (<= 1 port 65535))
+              (format t "Error: Port must be between 1 and 65535~%")
+              (sb-ext:exit :code 1))
+            
+            (format t "~&Starting Anagram Service v1.0.0~%")
+            (format t "~&Listening on ~A:~A~%" host port)
+            
+            ;; Set up signal handlers for graceful shutdown
+            (setup-signal-handlers)
+            
+            ;; Create application with middleware
+            (let ((app (web:wrap-middleware 
+                        (web:handle-routes *routes*)
+                        web:logging-middleware
+                        web:json-errors-middleware)))
+              
+              ;; Start the server
+              (handler-case
+                  (progn
+                    (setf *server* (server:start-server app :port port :address host))
+                    (format t "~&Server started successfully. Press Ctrl+C to stop.~%")
+                    
+                    ;; Keep main thread alive until shutdown requested
+                    (loop until *shutdown-requested*
+                          do (sleep 1))
+                    
+                    (format t "~&Shutdown complete.~%")
+                    (sb-ext:exit :code 0))
+                
+                (error (e)
+                  (format t "~&Error starting server: ~A~%" e)
+                  (sb-ext:exit :code 1))))))
       
-      ;; Start the server
-      (handler-case
-          (server:start-server app :port port :address "0.0.0.0")
-        (sb-sys:interactive-interrupt ()
-          (format t "~%Received interrupt signal~%")
-          (server:stop-server port))
-        (error (e)
-          (format t "~%Error occurred: ~A~%" e)
-          (server:stop-server port))))))
+      ;; Handle argument parsing errors gracefully
+      (argparse:argument-error (e)
+        (format t "~&Error: ~A~%" (argparse::error-message e))
+        (terpri)
+        (argparse:print-usage parser)
+        (sb-ext:exit :code 1))
+      
+      (error (e)
+        (format t "~&Unexpected error: ~A~%" e)
+        (sb-ext:exit :code 1)))))

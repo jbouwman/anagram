@@ -10,7 +10,8 @@
    (request epsilon.http.request)
    (response epsilon.http.response)
    (server epsilon.http.server)
-   (argparse epsilon.argparse))
+   (argparse epsilon.argparse)
+   (log epsilon.log))
   (:export
    main))
 
@@ -36,6 +37,7 @@
 ;;; Web handlers using epsilon.web
 
 (web:defhandler home-handler (req)
+  (log:debug "Handling request to home page")
   (web:html 
    "<html>
 <head>
@@ -99,16 +101,31 @@
 </html>"))
 
 (web:defhandler health-handler (req)
+  (log:debug "Handling health check request")
   (web:json (map:make-map "status" "healthy")))
 
 (web:defhandler anagram-handler (req)
-  (web:with-json-body (data req)
-    (let ((text (map:get data "text")))
-      (if (and text (> (length (string-trim " " text)) 0))
-          (let ((anagram (compute-anagram text)))
-            (web:json (map:make-map "original" text
-                                    "anagram" anagram)))
-          (web:bad-request "No text provided")))))
+  (log:debug "Handling anagram API request")
+  ;; Check content-type manually with lowercase header name
+  (let ((content-type (web:request-header req "content-type" "")))
+    (log:debug "Content-Type header: ~A" content-type)
+    (if (search "application/json" content-type)
+        (handler-case
+            (let ((data (json:parse (request:request-body req))))
+              (log:debug "Parsed JSON body: ~A" data)
+              (let ((text (map:get data "text")))
+                (log:debug "Extracted text: ~A" text)
+                (if (and text (> (length (string-trim " " text)) 0))
+                    (let ((anagram (compute-anagram text)))
+                      (log:debug "Generated anagram: ~A" anagram)
+                      (web:json (map:make-map "original" text
+                                              "anagram" anagram)))
+                    (progn
+                      (log:warn "No text provided in request")
+                      (web:bad-request "No text provided")))))
+          (error (e)
+            (web:bad-request (format nil "Invalid JSON: ~A" e))))
+        (web:bad-request "Content-Type must be application/json"))))
 
 ;;; Route definition
 
@@ -134,9 +151,11 @@
       (lambda (signal info context)
         (declare (ignore signal info context))
         (format t "~%Received SIGINT, initiating graceful shutdown...~%")
+        (force-output)
         (setf *shutdown-requested* t)
-        (when *server*
-          (ignore-errors (server:stop-server *server*)))))
+        ;; Don't try to stop server in interrupt context
+        ;; Let the main loop handle it
+        ))
     
     ;; Handle SIGTERM (typical Docker/systemd shutdown)
     (sb-sys:enable-interrupt sb-posix:sigterm
@@ -150,7 +169,7 @@
 (defun create-argument-parser ()
   "Create command line argument parser for anagram service"
   (let ((parser (argparse:make-parser 
-                 :prog "anagram"
+                 :command "anagram"
                  :description "A web service that generates anagrams by shuffling word characters")))
     
     ;; Port option
@@ -170,21 +189,22 @@
     ;; Help option
     (argparse:add-argument parser
                            "--help"
-                           :action 'store-true
+                           :action 'argparse::store-true
                            :help "Show this help message and exit")
     
     ;; Version option
     (argparse:add-argument parser
                            "--version"
-                           :action 'store-true
+                           :action 'argparse::store-true
                            :help "Show version information and exit")
     
     parser))
 
 ;;; Main entry point
 
-(defun main ()
+(defun main (&rest args)
   "Main entry point for the anagram service"
+  (declare (ignore args))  ; Ignore any args passed by epsilon run
   (let ((parser (create-argument-parser)))
     
     ;; Parse command line arguments
@@ -217,21 +237,59 @@
             ;; Set up signal handlers for graceful shutdown
             (setup-signal-handlers)
             
+            ;; Set up logging
+            (log:set-level "" :debug) ; Enable debug logging for all loggers
+            
+            ;; Define debug middleware
+            (defun debug-middleware (handler)
+              (lambda (req)
+                (log:info "=== Incoming request ===")
+                (log:info "Method: ~A" (request:request-method req))
+                (log:info "Path: ~A" (request:request-path req))
+                (log:info "Headers: ~A" (request:request-headers req))
+                (let ((result (funcall handler req)))
+                  (log:info "=== Response generated ===")
+                  result)))
+            
             ;; Create application with middleware
+            (log:info "Creating application with middleware stack")
             (let ((app (web:wrap-middleware 
                         (web:handle-routes *routes*)
+                        #'debug-middleware
                         web:logging-middleware
                         web:json-errors-middleware)))
+              
+              (log:info "Application created, starting server...")
               
               ;; Start the server
               (handler-case
                   (progn
-                    (setf *server* (server:start-server app :port port :address host))
+                    (log:debug "Calling server:start-server with port=~A, address=~A" port host)
+                    (log:debug "App function: ~A" app)
+                    
+                    ;; Try to understand what start-server returns
+                    (let ((server-result (server:start-server app :port port :address host)))
+                      (log:info "server:start-server returned: ~A (type: ~A)" 
+                                server-result (type-of server-result))
+                      (setf *server* server-result))
+                    
+                    (log:info "Server object created: ~A" *server*)
+                    
+                    ;; Add a test request to see if server is responding
+                    (log:info "Server should be listening on ~A:~A" host port)
                     (format t "~&Server started successfully. Press Ctrl+C to stop.~%")
                     
                     ;; Keep main thread alive until shutdown requested
+                    (log:debug "Entering main loop, waiting for shutdown signal")
                     (loop until *shutdown-requested*
-                          do (sleep 1))
+                          do (progn
+                               (log:trace "Main loop tick")
+                               (sleep 1)))
+                    
+                    ;; Shutdown was requested
+                    (log:info "Shutdown requested, stopping server...")
+                    (when *server*
+                      (ignore-errors (server:stop-server *server*)))
                     
                     (format t "~&Shutdown complete.~%")
                     (sb-ext:exit :code 0))

@@ -10,9 +10,7 @@
    (request epsilon.http.request)
    (response epsilon.http.response)
    (server epsilon.http.server)
-   (argparse epsilon.argparse))
-  (:export
-   main))
+   (argparse epsilon.argparse)))
 
 (in-package anagram)
 
@@ -98,23 +96,20 @@
 </body>
 </html>"))
 
-(web:defhandler health-handler (req)
-  (web:json (map:make-map "status" "healthy")))
-
 (web:defhandler anagram-handler (req)
-  (web:with-json-body (data req)
-    (let ((text (map:get data "text")))
-      (if (and text (> (length (string-trim " " text)) 0))
-          (let ((anagram (compute-anagram text)))
-            (web:json (map:make-map "original" text
-                                    "anagram" anagram)))
-          (web:bad-request "No text provided")))))
+  (let ((body (request:request-body req)))
+    (web:with-json-body (data req)
+      (let ((text (map:get data "text")))
+        (if (and text (> (length (string-trim " " text)) 0))
+            (let ((anagram (compute-anagram text)))
+              (web:json (map:make-map "original" text
+                                      "anagram" anagram)))
+            (web:bad-request "No text provided"))))))
 
 ;;; Route definition
 
 (web:defroutes *routes*
   (:get "/" #'home-handler)
-  (:get "/health" #'health-handler)
   (:post "/api/anagram" #'anagram-handler))
 
 ;;; Signal handling for graceful shutdown
@@ -127,30 +122,28 @@
 
 (defun setup-signal-handlers ()
   "Set up signal handlers for graceful shutdown"
-  #+sbcl
-  (progn
-    ;; Handle SIGINT (Ctrl+C)
-    (sb-sys:enable-interrupt sb-posix:sigint 
-      (lambda (signal info context)
-        (declare (ignore signal info context))
-        (format t "~%Received SIGINT, initiating graceful shutdown...~%")
-        (setf *shutdown-requested* t)
-        (when *server*
-          (ignore-errors (server:stop-server *server*)))))
+  ;; Handle SIGINT (Ctrl+C)
+  (sb-sys:enable-interrupt sb-posix:sigint 
+                           (lambda (signal info context)
+                             (declare (ignore signal info context))
+                             (format t "~%Received SIGINT, initiating graceful shutdown...~%")
+                             (setf *shutdown-requested* t)
+                             (when *server*
+                               (ignore-errors (server:stop-server *server*)))))
     
-    ;; Handle SIGTERM (typical Docker/systemd shutdown)
-    (sb-sys:enable-interrupt sb-posix:sigterm
-      (lambda (signal info context)
-        (declare (ignore signal info context))
-        (format t "~%Received SIGTERM, initiating graceful shutdown...~%")
-        (setf *shutdown-requested* t)
-        (when *server*
-          (ignore-errors (server:stop-server *server*)))))))
+  ;; Handle SIGTERM (typical Docker/systemd shutdown)
+  (sb-sys:enable-interrupt sb-posix:sigterm
+                           (lambda (signal info context)
+                             (declare (ignore signal info context))
+                             (format t "~%Received SIGTERM, initiating graceful shutdown...~%")
+                             (setf *shutdown-requested* t)
+                             (when *server*
+                               (ignore-errors (server:stop-server *server*))))))
 
 (defun create-argument-parser ()
   "Create command line argument parser for anagram service"
   (let ((parser (argparse:make-parser 
-                 :prog "anagram"
+                 :command "anagram"
                  :description "A web service that generates anagrams by shuffling word characters")))
     
     ;; Port option
@@ -173,33 +166,21 @@
                            :action 'store-true
                            :help "Show this help message and exit")
     
-    ;; Version option
-    (argparse:add-argument parser
-                           "--version"
-                           :action 'store-true
-                           :help "Show version information and exit")
-    
     parser))
 
 ;;; Main entry point
 
-(defun main ()
+(defun main (&rest args)
   "Main entry point for the anagram service"
   (let ((parser (create-argument-parser)))
     
     ;; Parse command line arguments
     (handler-case
-        (let* ((args (rest sb-ext:*posix-argv*))
-               (parsed (argparse:parse-args parser args)))
+        (let ((parsed (argparse:parse-args parser args)))
           
           ;; Handle help
           (when (map:get (argparse:parsed-options parsed) "help")
             (argparse:print-help parser)
-            (sb-ext:exit :code 0))
-          
-          ;; Handle version
-          (when (map:get (argparse:parsed-options parsed) "version")
-            (format t "Anagram Service v1.0.0~%")
             (sb-ext:exit :code 0))
           
           ;; Extract options
